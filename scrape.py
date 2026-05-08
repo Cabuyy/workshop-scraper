@@ -71,7 +71,6 @@ while True:
 # -----------------------------
 
 df = pd.DataFrame(all_quotes_data)
-display(df)
 
 # -----------------------------
 # Save locally as CSV
