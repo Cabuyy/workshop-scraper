@@ -59,6 +59,41 @@ while True:
             "scraped_at": scrape_time
         })
 
+    # -----------------------------
+# Alert: new quotes detected
+# -----------------------------
+
+rows = df.to_dict(orient="records")
+
+if not rows:
+    print("No rows found.")
+else:
+    # Get existing quotes from Supabase
+    existing_result = supabase.table("quotes").select("quote, author").execute()
+
+    existing_quotes = {
+        (item["quote"], item["author"])
+        for item in existing_result.data
+    }
+
+    # Find quotes that are not already in the database
+    new_rows = [
+        row for row in rows
+        if (row["quote"], row["author"]) not in existing_quotes
+    ]
+
+    if len(new_rows) > 0:
+        print(f"⚠️ ALERT: {len(new_rows)} new quote(s) found on the site!")
+
+        for row in new_rows:
+            print(f"   - {row['quote']} — {row['author']}")
+
+        # Insert only the new quotes
+        result = supabase.table("quotes").insert(new_rows).execute()
+        print(f"Inserted {len(new_rows)} new quote(s) into Supabase.")
+    else:
+        print("No new quotes found.")
+
     next_button = soup.select_one("li.next a")
 
     if next_button:
