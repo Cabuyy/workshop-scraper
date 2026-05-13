@@ -25,13 +25,10 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 # -----------------------------
 # Current scrape time
 # -----------------------------
-# This is local Belgium time.
-# It is sent to Supabase as TEXT for the scraped_at column.
 
-BRUSSELS_TZ = ZoneInfo("Europe/Brussels")
-scraped_at = datetime.now(BRUSSELS_TZ).isoformat(timespec="seconds")
+scraped_at = datetime.now(ZoneInfo("Europe/Brussels")).isoformat(timespec="seconds")
 
-print(f"Current scraped_at value for this run: {scraped_at}")
+print(f"Scrape run time: {scraped_at}")
 
 # -----------------------------
 # Scrape quotes
@@ -58,14 +55,12 @@ while True:
 
         quote = quote_el.get_text(strip=True) if quote_el else None
         author = author_el.get_text(strip=True) if author_el else None
-
-        tags_list = [tag.get_text(strip=True) for tag in tag_els]
-        tags_string = ", ".join(tags_list)
+        tags = ", ".join(tag.get_text(strip=True) for tag in tag_els)
 
         all_quotes_data.append({
             "quote": quote,
             "author": author,
-            "tags": tags_string,
+            "tags": tags,
             "scraped_at": scraped_at
         })
 
@@ -77,36 +72,36 @@ while True:
         break
 
 # -----------------------------
-# Create dataframe
+# Save CSV
 # -----------------------------
 
 df = pd.DataFrame(all_quotes_data)
+df["scraped_at"] = df["scraped_at"].astype(str)
 
-if not df.empty:
-    df["scraped_at"] = df["scraped_at"].astype(str)
+df.to_csv("my_dataset.csv", index=False, encoding="utf-8")
 
-# -----------------------------
-# Save locally as CSV
-# -----------------------------
-
-filename = "my_dataset.csv"
-df.to_csv(filename, index=False, encoding="utf-8")
-
-print(f"Saved {len(df)} rows to {filename}")
+print(f"Scraped {len(df)} rows.")
 
 # -----------------------------
-# Insert scrape as new log rows
+# Insert all rows as logs
 # -----------------------------
-# This keeps old rows and adds a new copy every run.
-# No duplicate checking.
-# No updating old rows.
 
 rows = df.to_dict(orient="records")
 
 if not rows:
     print("No rows found. Nothing inserted.")
 else:
-    result = supabase.table("quotes").insert(rows).execute()
+    try:
+        print("Trying to insert rows into Supabase...")
 
-    print(f"Inserted {len(rows)} new log row(s) into Supabase.")
-    print(f"scraped_at used for this run: {scraped_at}")
+        result = supabase.table("quotes").insert(rows).execute()
+
+        print("Insert request finished.")
+        print(f"Inserted rows returned by Supabase: {len(result.data or [])}")
+        print(f"scraped_at used: {scraped_at}")
+
+    except Exception as e:
+        print("❌ Supabase insert failed.")
+        print("Error details:")
+        print(e)
+        raise
