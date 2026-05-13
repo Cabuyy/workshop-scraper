@@ -30,27 +30,14 @@ current_url = base_url
 
 all_quotes_data = []
 
-# This is a TEXT value for your scraped_at text column
-scraped_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+# New value created every time the script runs
+# This is text, suitable for a Supabase text column
+scraped_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f UTC")
+
+print(f"Current scraped_at value for this run: {scraped_at}")
 
 # -----------------------------
-# Optional: backfill old NULL scraped_at values
-# -----------------------------
-# This updates the old first 100 rows that currently show NULL.
-# It only affects rows where scraped_at is NULL.
-
-try:
-    supabase.table("quotes") \
-        .update({"scraped_at": scraped_at}) \
-        .is_("scraped_at", "null") \
-        .execute()
-
-    print("Backfilled old NULL scraped_at values.")
-except Exception as e:
-    print(f"Could not backfill NULL scraped_at values: {e}")
-
-# -----------------------------
-# Scrape quotes from all pages
+# Scrape all quote pages
 # -----------------------------
 
 while True:
@@ -62,9 +49,7 @@ while True:
 
     soup = BeautifulSoup(response.text, "html.parser")
 
-    quote_items = soup.select(".quote")
-
-    for item in quote_items:
+    for item in soup.select(".quote"):
         quote_el = item.select_one(".text")
         author_el = item.select_one(".author")
         tag_els = item.select(".tag")
@@ -108,16 +93,60 @@ df.to_csv(filename, index=False, encoding="utf-8")
 print(f"Saved {len(df)} rows to {filename}")
 
 # -----------------------------
-# Insert every scrape into Supabase
+# Update existing rows every run
+# Insert only missing rows
 # -----------------------------
-# This does NOT check for duplicates.
-# Every GitHub Action run will add another 100 rows.
 
 rows = df.to_dict(orient="records")
 
 if not rows:
-    print("No rows found. Nothing inserted.")
+    print("No rows found. Nothing to update or insert.")
 else:
-    result = supabase.table("quotes").insert(rows).execute()
-    print(f"Inserted {len(rows)} scraped quote row(s) into Supabase.")
-    print(f"Scraped_at value used: {scraped_at}")
+    existing_result = (
+        supabase
+        .table("quotes")
+        .select("quote, author")
+        .execute()
+    )
+
+    existing_rows = existing_result.data or []
+
+    existing_quotes = {
+        (item["quote"], item["author"])
+        for item in existing_rows
+    }
+
+    updated_count = 0
+    inserted_count = 0
+
+    for row in rows:
+        quote = row["quote"]
+        author = row["author"]
+        tags = row["tags"]
+
+        key = (quote, author)
+
+        if key in existing_quotes:
+            # Update scraped_at every single run
+            supabase.table("quotes") \
+                .update({
+                    "tags": tags,
+                    "scraped_at": scraped_at
+                }) \
+                .eq("quote", quote) \
+                .eq("author", author) \
+                .execute()
+
+            updated_count += 1
+
+        else:
+            # Insert only if the quote does not exist yet
+            supabase.table("quotes") \
+                .insert(row) \
+                .execute()
+
+            inserted_count += 1
+
+    print(f"Updated {updated_count} existing quote row(s).")
+    print(f"Inserted {inserted_count} new quote row(s).")
+    print(f"Final scraped_at value used: {scraped_at}")
