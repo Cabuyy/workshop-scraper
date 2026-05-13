@@ -4,7 +4,7 @@ import os
 import requests
 import pandas as pd
 from bs4 import BeautifulSoup
-from datetime import datetime, timezone
+from datetime import datetime
 from urllib.parse import urljoin
 from supabase import create_client
 
@@ -45,9 +45,12 @@ while True:
         author = author_el.get_text(strip=True) if author_el else None
 
         tags_list = [tag.get_text(strip=True) for tag in tag_els]
+
+        # Because your database has one "tags" column,
+        # we store the tags as one comma-separated text value.
         tags_string = ", ".join(tags_list)
 
-        scrape_time = datetime.now(timezone.utc).isoformat()
+        scrape_time = datetime.now().isoformat()
 
         all_quotes_data.append({
             "quote": quote,
@@ -56,7 +59,41 @@ while True:
             "scraped_at": scrape_time
         })
 
-    # Go to the next page, or stop if there is no next page
+    # -----------------------------
+# Alert: new quotes detected
+# -----------------------------
+
+rows = df.to_dict(orient="records")
+
+if not rows:
+    print("No rows found.")
+else:
+    # Get existing quotes from Supabase
+    existing_result = supabase.table("quotes").select("quote, author").execute()
+
+    existing_quotes = {
+        (item["quote"], item["author"])
+        for item in existing_result.data
+    }
+
+    # Find quotes that are not already in the database
+    new_rows = [
+        row for row in rows
+        if (row["quote"], row["author"]) not in existing_quotes
+    ]
+
+    if len(new_rows) > 0:
+        print(f"⚠️ ALERT: {len(new_rows)} new quote(s) found on the site!")
+
+        for row in new_rows:
+            print(f"   - {row['quote']} — {row['author']}")
+
+        # Insert only the new quotes
+        result = supabase.table("quotes").insert(new_rows).execute()
+        print(f"Inserted {len(new_rows)} new quote(s) into Supabase.")
+    else:
+        print("No new quotes found.")
+
     next_button = soup.select_one("li.next a")
 
     if next_button:
@@ -78,35 +115,13 @@ filename = "my_dataset.csv"
 df.to_csv(filename, index=False)
 
 # -----------------------------
-# Alert: new quotes detected
+# Insert into Supabase
 # -----------------------------
 
 rows = df.to_dict(orient="records")
 
-if not rows:
-    print("No rows found.")
+if rows:
+    result = supabase.table("quotes").insert(rows).execute()
+    print(f"Inserted {len(rows)} rows into Supabase.")
 else:
-    # Get existing quotes from Supabase
-    existing_result = supabase.table("quotes").select("quote, author").execute()
-
-    existing_quotes = {
-        (item["quote"], item["author"])
-        for item in existing_result.data
-    }
-
-    # Only keep quotes that are not already in the database
-    new_rows = [
-        row for row in rows
-        if (row["quote"], row["author"]) not in existing_quotes
-    ]
-
-    if len(new_rows) > 0:
-        print(f"⚠️ ALERT: {len(new_rows)} new quote(s) found on the site!")
-
-        for row in new_rows:
-            print(f"   - {row['quote']} — {row['author']}")
-
-        result = supabase.table("quotes").insert(new_rows).execute()
-        print(f"Inserted {len(new_rows)} new quote(s) into Supabase.")
-    else:
-        print("No new quotes found.")
+    print("No rows found.")
