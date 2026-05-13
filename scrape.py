@@ -23,16 +23,15 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # -----------------------------
-# Current scraped time
+# Current scrape time
 # -----------------------------
-# This creates the CURRENT local Belgium time every time the script runs.
-# It is saved as text, which matches your Supabase scraped_at text column.
+# This is local Belgium time.
+# It is sent to Supabase as TEXT for the scraped_at column.
 
 BRUSSELS_TZ = ZoneInfo("Europe/Brussels")
-
 scraped_at = datetime.now(BRUSSELS_TZ).isoformat(timespec="seconds")
 
-print(f"Script started. Current scraped_at value: {scraped_at}")
+print(f"Current scraped_at value for this run: {scraped_at}")
 
 # -----------------------------
 # Scrape quotes
@@ -78,7 +77,7 @@ while True:
         break
 
 # -----------------------------
-# Create dataframe and CSV
+# Create dataframe
 # -----------------------------
 
 df = pd.DataFrame(all_quotes_data)
@@ -86,63 +85,28 @@ df = pd.DataFrame(all_quotes_data)
 if not df.empty:
     df["scraped_at"] = df["scraped_at"].astype(str)
 
+# -----------------------------
+# Save locally as CSV
+# -----------------------------
+
 filename = "my_dataset.csv"
 df.to_csv(filename, index=False, encoding="utf-8")
 
 print(f"Saved {len(df)} rows to {filename}")
 
 # -----------------------------
-# Update scraped_at every run
-# Insert missing quotes only
+# Insert scrape as new log rows
 # -----------------------------
+# This keeps old rows and adds a new copy every run.
+# No duplicate checking.
+# No updating old rows.
 
 rows = df.to_dict(orient="records")
 
 if not rows:
-    print("No rows found. Nothing to update.")
+    print("No rows found. Nothing inserted.")
 else:
-    existing_result = (
-        supabase
-        .table("quotes")
-        .select("quote, author")
-        .execute()
-    )
+    result = supabase.table("quotes").insert(rows).execute()
 
-    existing_rows = existing_result.data or []
-
-    existing_quotes = {
-        (item["quote"], item["author"])
-        for item in existing_rows
-    }
-
-    updated_count = 0
-    inserted_count = 0
-
-    for row in rows:
-        quote = row["quote"]
-        author = row["author"]
-        tags = row["tags"]
-
-        key = (quote, author)
-
-        if key in existing_quotes:
-            supabase.table("quotes") \
-                .update({
-                    "tags": tags,
-                    "scraped_at": scraped_at
-                }) \
-                .eq("quote", quote) \
-                .eq("author", author) \
-                .execute()
-
-            updated_count += 1
-        else:
-            supabase.table("quotes") \
-                .insert(row) \
-                .execute()
-
-            inserted_count += 1
-
-    print(f"Updated {updated_count} existing row(s).")
-    print(f"Inserted {inserted_count} new row(s).")
-    print(f"Finished. scraped_at used: {scraped_at}")
+    print(f"Inserted {len(rows)} new log row(s) into Supabase.")
+    print(f"scraped_at used for this run: {scraped_at}")
