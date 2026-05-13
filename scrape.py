@@ -3,6 +3,7 @@
 import os
 import requests
 import pandas as pd
+
 from bs4 import BeautifulSoup
 from datetime import datetime, timezone
 from urllib.parse import urljoin
@@ -21,7 +22,7 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # -----------------------------
-# Scrape quotes
+# Scrape settings
 # -----------------------------
 
 base_url = "https://quotes.toscrape.com/"
@@ -29,17 +30,41 @@ current_url = base_url
 
 all_quotes_data = []
 
-# This is TEXT, suitable for a Supabase text column
+# This is a TEXT value for your scraped_at text column
 scraped_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
+# -----------------------------
+# Optional: backfill old NULL scraped_at values
+# -----------------------------
+# This updates the old first 100 rows that currently show NULL.
+# It only affects rows where scraped_at is NULL.
+
+try:
+    supabase.table("quotes") \
+        .update({"scraped_at": scraped_at}) \
+        .is_("scraped_at", "null") \
+        .execute()
+
+    print("Backfilled old NULL scraped_at values.")
+except Exception as e:
+    print(f"Could not backfill NULL scraped_at values: {e}")
+
+# -----------------------------
+# Scrape quotes from all pages
+# -----------------------------
+
 while True:
+    print(f"Scraping: {current_url}")
+
     response = requests.get(current_url, timeout=20)
     response.raise_for_status()
     response.encoding = "utf-8"
 
     soup = BeautifulSoup(response.text, "html.parser")
 
-    for item in soup.select(".quote"):
+    quote_items = soup.select(".quote")
+
+    for item in quote_items:
         quote_el = item.select_one(".text")
         author_el = item.select_one(".author")
         tag_els = item.select(".tag")
@@ -54,7 +79,7 @@ while True:
             "quote": quote,
             "author": author,
             "tags": tags_string,
-            "scraped_at": str(scraped_at)
+            "scraped_at": scraped_at
         })
 
     next_button = soup.select_one("li.next a")
@@ -70,7 +95,6 @@ while True:
 
 df = pd.DataFrame(all_quotes_data)
 
-# Make absolutely sure scraped_at is text
 if not df.empty:
     df["scraped_at"] = df["scraped_at"].astype(str)
 
@@ -81,35 +105,19 @@ if not df.empty:
 filename = "my_dataset.csv"
 df.to_csv(filename, index=False, encoding="utf-8")
 
+print(f"Saved {len(df)} rows to {filename}")
+
 # -----------------------------
-# Alert: new quotes detected
+# Insert every scrape into Supabase
 # -----------------------------
+# This does NOT check for duplicates.
+# Every GitHub Action run will add another 100 rows.
 
 rows = df.to_dict(orient="records")
 
 if not rows:
-    print("No rows found.")
+    print("No rows found. Nothing inserted.")
 else:
-    existing_result = supabase.table("quotes").select("quote, author").execute()
-
-    existing_quotes = {
-        (item["quote"], item["author"])
-        for item in existing_result.data
-    }
-
-    new_rows = [
-        row for row in rows
-        if (row["quote"], row["author"]) not in existing_quotes
-    ]
-
-    if new_rows:
-        print(f"⚠️ ALERT: {len(new_rows)} new quote(s) found on the site!")
-
-        for row in new_rows:
-            print(f"   - {row['quote']} — {row['author']}")
-
-        result = supabase.table("quotes").insert(new_rows).execute()
-
-        print(f"Inserted {len(new_rows)} new quote(s) into Supabase.")
-    else:
-        print("No new quotes found.")
+    result = supabase.table("quotes").insert(rows).execute()
+    print(f"Inserted {len(rows)} scraped quote row(s) into Supabase.")
+    print(f"Scraped_at value used: {scraped_at}")
